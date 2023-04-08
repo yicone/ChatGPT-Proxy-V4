@@ -118,6 +118,22 @@ func main() {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
+	handler.POST("/refresh_puid", func(c *gin.Context) {
+		access_token := c.PostForm("access_token")
+		puid := c.PostForm("puid")
+		// if access_token not in dict, add it
+		if _, ok := account_map[access_token]; !ok {
+			account_map[access_token]["puid"] = puid
+		}
+		puid = refreshPuid(access_token, puid)
+		if puid == "" {
+			account_map[access_token]["puid"] = puid
+			c.JSON(200, gin.H{"puid": puid})
+		} else {
+			c.JSON(500, gin.H{"error": "refresh puid failed"})
+		}
+	})
+
 	handler.Any("/api/*path", proxy)
 
 	handler.POST("/admin/update", func(c *gin.Context) {
@@ -170,7 +186,7 @@ func main() {
 // Print response body
 // Get cookies from response
 // Find _puid cookie
-func refreshPuid(access_token string, puid string) {
+func refreshPuid(access_token string, puid string) string {
 	url := "https://chat.openai.com/backend-api/models"
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
 	req.Header.Set("Host", "chat.openai.com")
@@ -194,7 +210,7 @@ func refreshPuid(access_token string, puid string) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return ""
 	}
 	defer resp.Body.Close()
 	println("refreshPuid Got response: " + resp.Status)
@@ -203,7 +219,12 @@ func refreshPuid(access_token string, puid string) {
 
 		body, _ := io.ReadAll(resp.Body)
 		println(string(body))
-		return
+
+		// if puid is invalid, remove it from dict
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			delete(account_map[access_token], puid)
+		}
+		return ""
 	}
 
 	cookies := resp.Cookies()
@@ -216,6 +237,8 @@ func refreshPuid(access_token string, puid string) {
 			break
 		}
 	}
+
+	return puid
 }
 
 func proxy(c *gin.Context) {

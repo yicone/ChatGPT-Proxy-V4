@@ -128,19 +128,37 @@ func main() {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
+	type RefreshPuidRequest struct {
+		AccessToken string `json:"access_token"`
+		Puid        string `json:"puid"`
+	}
+
+	type RefreshPuidResponse struct {
+		Puid  string `json:"puid"`
+		Error string `json:"error"`
+	}
+
 	handler.POST("/refresh_puid", func(c *gin.Context) {
-		access_token := c.PostForm("access_token")
-		puid := c.PostForm("puid")
-		// if access_token not in dict, add it
-		if _, ok := account_map[access_token]; !ok {
-			account_map[access_token]["puid"] = puid
+		var req RefreshPuidRequest
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
-		puid = refreshPuid(access_token, puid)
-		if puid == "" {
-			account_map[access_token]["puid"] = puid
-			c.JSON(200, gin.H{"puid": puid})
+
+		// if access_token not in dict, add it
+		_, ok := account_map[req.AccessToken]
+		if !ok {
+			account_map[req.AccessToken]["puid"] = req.Puid
 		} else {
-			c.JSON(500, gin.H{"error": "refresh puid failed"})
+			req.Puid = refreshPuid(req.AccessToken, req.Puid)
+		}
+
+		if req.Puid == "" {
+			c.JSON(http.StatusInternalServerError, &RefreshPuidResponse{Error: "refresh puid failed"})
+		} else {
+			account_map[req.AccessToken]["puid"] = req.Puid
+			c.JSON(http.StatusOK, &RefreshPuidResponse{Puid: req.Puid})
 		}
 	})
 

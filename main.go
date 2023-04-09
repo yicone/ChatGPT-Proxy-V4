@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"io"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -25,20 +25,26 @@ var (
 	}
 	client, _   = tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
 	account_map = make(map[string]map[string]string)
+	HOST        = os.Getenv("HOST")
+	PORT        = os.Getenv("PORT")
+	http_proxy  = os.Getenv("http_proxy")
+	auth_proxy  = os.Getenv("auth_proxy")
 
-	http_proxy = os.Getenv("http_proxy")
-	auth_proxy = os.Getenv("auth_proxy")
+	access_token_str               = os.Getenv("ACCESS_TOKEN")
+	puid_str                       = os.Getenv("PUID")
+	cf_clearance_str               = os.Getenv("CF_CLEARANCE")
+	openai_email_str               = os.Getenv("OPENAI_EMAIL")
+	openai_pass_str                = os.Getenv("OPENAI_PASS")
+	enable_puid_auto_refresh_str   = os.Getenv("ENABLE_PUID_AUTO_REFRESH")
+	puid_auto_refresh_interval_str = os.Getenv("PUID_AUTO_REFRESH_INTERVAL")
+
+	enable_puid_auto_refresh            = true
+	puid_auto_refresh_interval_duration = 6 * time.Hour
 
 	admin_pass = os.Getenv("ADMIN_PASS")
 )
 
 func main() {
-	access_token_str := os.Getenv("ACCESS_TOKEN")
-	puid_str := os.Getenv("PUID")
-	cf_clearance_str := os.Getenv("CF_CLEARANCE")
-	openai_email_str := os.Getenv("OPENAI_EMAIL")
-	openai_pass_str := os.Getenv("OPENAI_PASS")
-
 	if access_token_str == "" && cf_clearance_str == "" && openai_email_str == "" && openai_pass_str == "" {
 		println("Error: Authentication information not found.")
 		return
@@ -62,30 +68,39 @@ func main() {
 		account_map[access_token]["openai_pass"] = openai_pass
 	}
 
+	if http_proxy != "" {
+		client.SetProxy(http_proxy)
+		log.Println("Proxy set:" + http_proxy)
+	}
+
 	if puid_str != "" {
-		refresh_puid_interval_str := os.Getenv("REFRESH_PUID_INTERVAL")
-		if refresh_puid_interval_str == "" {
-			refresh_puid_interval_str = "6"
+		if enable_puid_auto_refresh_str != "" {
+			enable_puid_auto_refresh = enable_puid_auto_refresh_str == "true"
 		}
 
-		update_puid_interval, err := strconv.Atoi(refresh_puid_interval_str)
-		if err != nil {
-			fmt.Printf("Error converting value to int: %v\n", err)
+		if !enable_puid_auto_refresh {
+			println("PUID auto refresh disabled")
+			return
 		}
 
-		update_puid_interval_duration := time.Duration(update_puid_interval) * time.Hour
+		var puids = strings.Split(puid_str, ",")
+
+		if len(access_tokens) != len(puids) {
+			println("Error: ACCESS_TOKEN and PUID are not set correctly")
+			return
+		}
+
+		if puid_auto_refresh_interval_str != "" {
+			if update_puid_interval, err := strconv.Atoi(puid_auto_refresh_interval_str); err == nil {
+				puid_auto_refresh_interval_duration = time.Duration(update_puid_interval) * time.Hour
+			} else {
+				log.Fatalf("Error converting value to int: %v\n", err)
+			}
+		}
 
 		// refresh puid every `update_puid_interval` hours
 		go func() {
 			for {
-				// build a dict that access token as key and puid as value
-				var puids = strings.Split(puid_str, ",")
-
-				if len(access_tokens) != len(puids) {
-					println("Error: ACCESS_TOKEN and PUID are not set correctly")
-					return
-				}
-
 				account_map = make(map[string]map[string]string)
 				// 使用 for 循环遍历字符串切片，将它们作为键值对添加到字典中
 				for i := 0; i < len(access_tokens); i++ {
@@ -95,21 +110,16 @@ func main() {
 				}
 
 				for access_token, value := range account_map {
-					if http_proxy != "" {
-						client.SetProxy(http_proxy)
-						println("Proxy set:" + http_proxy)
-					}
 					// Automatically refresh the puid cookie
 					if access_token != "" {
 						refreshPuid(access_token, value["puid"])
 					}
 				}
-				time.Sleep(update_puid_interval_duration)
+				time.Sleep(puid_auto_refresh_interval_duration)
 			}
 		}()
 	}
 
-	PORT := os.Getenv("PORT")
 	if PORT == "" {
 		PORT = "8080"
 	}
@@ -167,10 +177,10 @@ func main() {
 			// 	// os.Setenv("OPENAI_PASS", openai_pass)
 		} else if update.Field == "admin_pass" {
 			admin_pass = update.Value
-			// os.Setenv("ADMIN_PASS", admin_pass)
+			os.Setenv("ADMIN_PASS", admin_pass)
 		} else if update.Field == "auth_proxy" {
 			auth_proxy = update.Value
-			// os.Setenv("auth_proxy", auth_proxy)
+			os.Setenv("auth_proxy", auth_proxy)
 		} else {
 			c.JSON(400, gin.H{"message": "field not found"})
 			return
@@ -213,12 +223,12 @@ func refreshPuid(access_token string, puid string) string {
 		return ""
 	}
 	defer resp.Body.Close()
-	println("refreshPuid Got response: " + resp.Status)
+	log.Println("refreshPuid Got response: " + resp.Status)
 	if resp.StatusCode != 200 {
-		println("Warning: " + resp.Status)
+		log.Println("Warning: " + resp.Status)
 
 		body, _ := io.ReadAll(resp.Body)
-		println(string(body))
+		log.Println(string(body))
 
 		// if puid is invalid, remove it from dict
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {

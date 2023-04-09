@@ -13,6 +13,14 @@ Cloudflare Bypass for OpenAI based on `puid`
 
 ## Usage
 
+### Endpoints
+- /api/* - Proxy to chat.openai.com
+- [POST] /refresh_puid - Refresh `_puid` and return it
+- /ping - Check if the server is alive
+
+### Peroidic refresh
+if `ENABLE_PUID_AUTO_REFRESH` is set to `true`, `_puid` will be refreshed every `PUID_AUTO_REFRESH_INTERVAL` hours.
+
 ### Environment variables
 
 - ### Acount info 
@@ -21,7 +29,8 @@ Cloudflare Bypass for OpenAI based on `puid`
     - `OPENAI_EMAIL` - Preset OpenAI Email. There can be more than one, comma separated
     - `OPENAI_PASS` - Preset OpenAi pass. There can be more than one, comma separated
     - `PUID` - Preset `_puid`. There can be more than one, comma separated
-- `REFRESH_PUID_INTERVAL` - Interval hours to refresh `_puid`, default `6`
+- `ENABLE_PUID_AUTO_REFRESH` - Can be used turn on/off automatic puid refresh, default `true`
+- `PUID_AUTO_REFRESH_INTERVAL` - Interval hours to refresh `_puid`, default `6`
 - `HOST` - Host to listen on
 - `PORT` - Port to listen on, default `8080`
 - `http_proxy` - Proxy to use

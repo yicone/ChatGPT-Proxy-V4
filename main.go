@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -10,8 +11,8 @@ import (
 
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
-
 	"github.com/fvbock/endless"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -206,7 +207,8 @@ func main() {
 		c.JSON(200, gin.H{"message": "updated"})
 	})
 	gin.SetMode(gin.ReleaseMode)
-	endless.ListenAndServe(os.Getenv("HOST")+":"+PORT, handler)
+	log.Println("proxy starting at" + HOST + ":" + PORT + "... ")
+	endless.ListenAndServe(HOST+":"+PORT, handler)
 }
 
 // Set authorization header
@@ -301,7 +303,8 @@ func proxy(c *gin.Context) {
 	// extract access token from authorization header
 	access_token := strings.Split(authorization, " ")[1]
 
-	cf_clearance := account_map[access_token]["puid"]
+	account := account_map[access_token]
+	cf_clearance := account["puid"]
 	if cf_clearance == "" {
 		cf_clearance = c.Request.Header.Get("cf_clearance")
 	}
@@ -312,10 +315,23 @@ func proxy(c *gin.Context) {
 		},
 	)
 
-	// get puid from access_token_puid_dict
-	puid := account_map[access_token]["puid"]
+	// get puid from account
+	puid := account["puid"]
 	if puid == "" {
 		puid = c.Request.Header.Get("puid")
+	}
+
+	if puid == "" {
+		// get puid from account_map randomly
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+		access_tokens := make([]string, 0, len(account_map))
+		for access_token := range account_map {
+			access_tokens = append(access_tokens, access_token)
+		}
+
+		randomAccessToken := access_tokens[r.Intn(len(access_tokens))]
+		puid = account_map[randomAccessToken]["puid"]
 	}
 
 	if puid != "" {

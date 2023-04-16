@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -20,7 +21,7 @@ var (
 	jar     = tls_client.NewCookieJar()
 	options = []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(360),
-		tls_client.WithClientProfile(tls_client.Chrome_110),
+		tls_client.WithClientProfile(tls_client.Chrome_112),
 		tls_client.WithNotFollowRedirects(),
 		tls_client.WithCookieJar(jar), // create cookieJar instance and pass it as argument
 	}
@@ -29,44 +30,25 @@ var (
 	HOST        = os.Getenv("HOST")
 	PORT        = os.Getenv("PORT")
 	http_proxy  = os.Getenv("http_proxy")
-	auth_proxy  = os.Getenv("auth_proxy")
 
-	access_token_str               = os.Getenv("ACCESS_TOKEN")
-	puid_str                       = os.Getenv("PUID")
-	cf_clearance_str               = os.Getenv("CF_CLEARANCE")
-	openai_email_str               = os.Getenv("OPENAI_EMAIL")
-	openai_pass_str                = os.Getenv("OPENAI_PASS")
+	access_token_str = os.Getenv("ACCESS_TOKEN")
+	puid_str         = os.Getenv("PUID")
+	cf_clearance_str = os.Getenv("CF_CLEARANCE")
+	openai_email_str = os.Getenv("OPENAI_EMAIL")
+
 	enable_puid_auto_refresh_str   = os.Getenv("ENABLE_PUID_AUTO_REFRESH")
 	puid_auto_refresh_interval_str = os.Getenv("PUID_AUTO_REFRESH_INTERVAL")
 
 	enable_puid_auto_refresh            = true
 	puid_auto_refresh_interval_duration = 6 * time.Hour
 
-	admin_pass = os.Getenv("ADMIN_PASS")
+	// admin_pass = os.Getenv("ADMIN_PASS")
 )
 
 func main() {
-	if access_token_str == "" && cf_clearance_str == "" && openai_email_str == "" && openai_pass_str == "" {
-		println("Error: Authentication information not found.")
-		return
-	}
-
-	var access_tokens = strings.Split(access_token_str, ",")
-	var cf_clearances = strings.Split(cf_clearance_str, ",")
-	var openai_emails = strings.Split(openai_email_str, ",")
-	var openai_passs = strings.Split(openai_pass_str, ",")
-
-	for i := 0; i < len(access_tokens); i++ {
-		var access_token = access_tokens[i]
-		account_map[access_token] = make(map[string]string)
-
-		var cf_clearance = cf_clearances[i]
-		var openai_email = openai_emails[i]
-		var openai_pass = openai_passs[i]
-
-		account_map[access_token]["cf_clearance"] = cf_clearance
-		account_map[access_token]["openai_email"] = openai_email
-		account_map[access_token]["openai_pass"] = openai_pass
+	if access_token_str == "" || cf_clearance_str == "" || openai_email_str == "" {
+		println("Error: ACCESS_TOKEN, CF_CLEARANCE, OPENAI_EMAIL are not set correctly")
+		os.Exit(1)
 	}
 
 	if http_proxy != "" {
@@ -74,51 +56,71 @@ func main() {
 		log.Println("Proxy set:" + http_proxy)
 	}
 
+	var access_tokens = strings.Split(access_token_str, ",")
+	var cf_clearances = strings.Split(cf_clearance_str, ",")
+	var openai_emails = strings.Split(openai_email_str, ",")
+
+	if len(access_tokens) != len(cf_clearances) || len(access_tokens) != len(openai_emails) {
+		println("Error: ACCESS_TOKEN, CF_CLEARANCE, OPENAI_EMAIL are not set correctly")
+		os.Exit(1)
+	}
+
+	for i := 0; i < len(access_tokens); i++ {
+		var access_token = access_tokens[i]
+		if access_token != "" {
+			account_map[access_token] = make(map[string]string)
+
+			var cf_clearance = cf_clearances[i]
+			var openai_email = openai_emails[i]
+
+			account_map[access_token]["cf_clearance"] = cf_clearance
+			account_map[access_token]["openai_email"] = openai_email
+		}
+	}
+
 	if puid_str != "" {
 		if enable_puid_auto_refresh_str != "" {
 			enable_puid_auto_refresh = enable_puid_auto_refresh_str == "true"
 		}
 
-		if !enable_puid_auto_refresh {
-			println("PUID auto refresh disabled")
-			return
-		}
+		if enable_puid_auto_refresh {
 
-		var puids = strings.Split(puid_str, ",")
+			var puids = strings.Split(puid_str, ",")
 
-		if len(access_tokens) != len(puids) {
-			println("Error: ACCESS_TOKEN and PUID are not set correctly")
-			return
-		}
-
-		if puid_auto_refresh_interval_str != "" {
-			if update_puid_interval, err := strconv.Atoi(puid_auto_refresh_interval_str); err == nil {
-				puid_auto_refresh_interval_duration = time.Duration(update_puid_interval) * time.Hour
-			} else {
-				log.Fatalf("Error converting value to int: %v\n", err)
+			if len(access_tokens) != len(puids) {
+				println("Error: ACCESS_TOKEN and PUID are not set correctly")
+				return
 			}
-		}
 
-		// refresh puid every `update_puid_interval` hours
-		go func() {
-			for {
-				account_map = make(map[string]map[string]string)
-				// 使用 for 循环遍历字符串切片，将它们作为键值对添加到字典中
-				for i := 0; i < len(access_tokens); i++ {
-					var access_token = access_tokens[i]
-
-					account_map[access_token]["puid"] = puids[i]
+			if puid_auto_refresh_interval_str != "" {
+				if update_puid_interval, err := strconv.Atoi(puid_auto_refresh_interval_str); err == nil {
+					puid_auto_refresh_interval_duration = time.Duration(update_puid_interval) * time.Hour
+				} else {
+					log.Fatalf("Error converting value to int: %v\n", err)
 				}
+			}
 
-				for access_token, value := range account_map {
-					// Automatically refresh the puid cookie
-					if access_token != "" {
-						refreshPuid(access_token, value["puid"])
+			// refresh puid every `update_puid_interval` hours
+			go func() {
+				for {
+					account_map = make(map[string]map[string]string)
+					// 使用 for 循环遍历字符串切片，将它们作为键值对添加到字典中
+					for i := 0; i < len(access_tokens); i++ {
+						var access_token = access_tokens[i]
+
+						account_map[access_token]["puid"] = puids[i]
 					}
+
+					for access_token, value := range account_map {
+						// Automatically refresh the puid cookie
+						if access_token != "" {
+							refreshPuid(access_token, value["puid"])
+						}
+					}
+					time.Sleep(puid_auto_refresh_interval_duration)
 				}
-				time.Sleep(puid_auto_refresh_interval_duration)
-			}
-		}()
+			}()
+		}
 	}
 
 	if PORT == "" {
@@ -127,6 +129,27 @@ func main() {
 	handler := gin.Default()
 	handler.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "pong"})
+	})
+
+	handler.Any("/api/*path", proxy)
+
+	handler.POST("/admin/update", func(c *gin.Context) {
+		// if c.Request.Header.Get("Authorization") != admin_pass {
+		// 	c.JSON(401, gin.H{"message": "unauthorized"})
+		// 	return
+		// }
+
+		type RequestData struct {
+			AccessToken string            `json:"access_token"`
+			AccessInfo  map[string]string `json:"access_info"`
+		}
+		var request RequestData
+		c.BindJSON(&request)
+
+		if request.AccessToken != "" {
+			account_map[request.AccessToken] = request.AccessInfo
+		}
+		c.JSON(200, gin.H{"message": "updated"})
 	})
 
 	type RefreshPuidRequest struct {
@@ -163,54 +186,12 @@ func main() {
 		}
 	})
 
-	handler.Any("/api/*path", proxy)
-
-	handler.POST("/admin/update", func(c *gin.Context) {
-		if c.Request.Header.Get("Authorization") != admin_pass {
-			c.JSON(401, gin.H{"message": "unauthorized"})
-			return
-		}
-		type Update struct {
-			Value string `json:"value"`
-			Field string `json:"field"`
-		}
-		var update Update
-		c.BindJSON(&update)
-
-		// if update.Field == "cf_clearance" {
-		// 	cf_clearance = update.Value
-		// 	// export environment variable
-		// 	// os.Setenv("CF_CLEARANCE", cf_clearance)
-		// } else if update.Field == "access_token" {
-		// 	access_token = update.Value
-		// 	// os.Setenv("ACCESS_TOKEN", access_token)
-		// } else
-		if update.Field == "http_proxy" {
-			http_proxy = update.Value
-			client.SetProxy(http_proxy)
-			// } else if update.Field == "openai_email" {
-			// 	openai_email = update.Value
-			// 	// os.Setenv("OPENAI_EMAIL", openai_email)
-			// } else if update.Field == "openai_pass" {
-			// 	openai_pass = update.Value
-			// 	// os.Setenv("OPENAI_PASS", openai_pass)
-		} else if update.Field == "admin_pass" {
-			admin_pass = update.Value
-			os.Setenv("ADMIN_PASS", admin_pass)
-		} else if update.Field == "auth_proxy" {
-			auth_proxy = update.Value
-			os.Setenv("auth_proxy", auth_proxy)
-		} else {
-			c.JSON(400, gin.H{"message": "field not found"})
-			return
-		}
-		c.JSON(200, gin.H{"message": "updated"})
-	})
 	gin.SetMode(gin.ReleaseMode)
 	log.Println("proxy starting at" + HOST + ":" + PORT + "... ")
 	endless.ListenAndServe(HOST+":"+PORT, handler)
 }
 
+// !Obosolete
 // Set authorization header
 // Initial puid cookie
 // Print response body
@@ -285,7 +266,6 @@ func proxy(c *gin.Context) {
 		url = "https://chat.openai.com/backend-api" + c.Param("path")
 	}
 	request_method = c.Request.Method
-
 	request, err = http.NewRequest(request_method, url, c.Request.Body)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -296,33 +276,25 @@ func proxy(c *gin.Context) {
 	request.Header.Set("Connection", "keep-alive")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Keep-Alive", "timeout=360")
-	request.Header.Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36")
 	authorization := c.Request.Header.Get("Authorization")
 	request.Header.Set("Authorization", authorization)
+
+	request.Header.Set("sec-ch-ua", "\"Chromium\";v=\"112\", \"Brave\";v=\"112\", \"Not:A-Brand\";v=\"99\"")
+	request.Header.Set("sec-ch-ua-mobile", "?0")
+	request.Header.Set("sec-ch-ua-platform", "\"Linux\"")
+	request.Header.Set("sec-fetch-dest", "empty")
+	request.Header.Set("sec-fetch-mode", "cors")
+	request.Header.Set("sec-fetch-site", "same-origin")
+	request.Header.Set("sec-gpc", "1")
+	request.Header.Set("user-agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36")
 
 	// extract access token from authorization header
 	access_token := strings.Split(authorization, " ")[1]
 
-	account := account_map[access_token]
-	cf_clearance := account["puid"]
-	if cf_clearance == "" {
-		cf_clearance = c.Request.Header.Get("cf_clearance")
-	}
-	request.AddCookie(
-		&http.Cookie{
-			Name:  "cf_clearance",
-			Value: cf_clearance,
-		},
-	)
-
-	// get puid from account
-	puid := account["puid"]
-	if puid == "" {
-		puid = c.Request.Header.Get("puid")
-	}
-
-	if puid == "" {
-		// get puid from account_map randomly
+	// assert access_token in access_info_map keys
+	access_info, ok := account_map[access_token]
+	if !ok {
+		// get puid from access_info_map randomly
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 		access_tokens := make([]string, 0, len(account_map))
@@ -330,9 +302,29 @@ func proxy(c *gin.Context) {
 			access_tokens = append(access_tokens, access_token)
 		}
 
-		randomAccessToken := access_tokens[r.Intn(len(access_tokens))]
-		puid = account_map[randomAccessToken]["puid"]
+		access_token := access_tokens[r.Intn(len(access_tokens))]
+		access_info = account_map[access_token]
+		log.Println("access_info from access_info_map randomly: " + fmt.Sprintf("%v", access_info["openai_email"]))
+	} else {
+		log.Println("access_info from access_info_map: " + fmt.Sprintf("%v", access_info["openai_email"]))
 	}
+
+	cf_clearance := access_info["cf_clearance"]
+	if cf_clearance == "" {
+		cf_clearance = c.Request.Header.Get("cf_clearance")
+	}
+
+	puid := access_info["puid"]
+	if puid == "" {
+		puid = c.Request.Header.Get("puid")
+	}
+
+	request.AddCookie(
+		&http.Cookie{
+			Name:  "cf_clearance",
+			Value: cf_clearance,
+		},
+	)
 
 	if puid != "" {
 		request.AddCookie(

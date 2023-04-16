@@ -25,11 +25,11 @@ var (
 		tls_client.WithNotFollowRedirects(),
 		tls_client.WithCookieJar(jar), // create cookieJar instance and pass it as argument
 	}
-	client, _   = tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
-	account_map = make(map[string]map[string]string)
-	HOST        = os.Getenv("HOST")
-	PORT        = os.Getenv("PORT")
-	http_proxy  = os.Getenv("http_proxy")
+	client, _               = tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
+	accessTokenToAccessInfo = make(map[string]map[string]string)
+	HOST                    = os.Getenv("HOST")
+	PORT                    = os.Getenv("PORT")
+	http_proxy              = os.Getenv("http_proxy")
 
 	access_token_str = os.Getenv("ACCESS_TOKEN")
 	puid_str         = os.Getenv("PUID")
@@ -68,13 +68,13 @@ func main() {
 	for i := 0; i < len(access_tokens); i++ {
 		var access_token = access_tokens[i]
 		if access_token != "" {
-			account_map[access_token] = make(map[string]string)
+			accessTokenToAccessInfo[access_token] = make(map[string]string)
 
 			var cf_clearance = cf_clearances[i]
 			var openai_email = openai_emails[i]
 
-			account_map[access_token]["cf_clearance"] = cf_clearance
-			account_map[access_token]["openai_email"] = openai_email
+			accessTokenToAccessInfo[access_token]["cf_clearance"] = cf_clearance
+			accessTokenToAccessInfo[access_token]["openai_email"] = openai_email
 		}
 	}
 
@@ -103,15 +103,15 @@ func main() {
 			// refresh puid every `update_puid_interval` hours
 			go func() {
 				for {
-					account_map = make(map[string]map[string]string)
+					accessTokenToAccessInfo = make(map[string]map[string]string)
 					// 使用 for 循环遍历字符串切片，将它们作为键值对添加到字典中
 					for i := 0; i < len(access_tokens); i++ {
 						var access_token = access_tokens[i]
 
-						account_map[access_token]["puid"] = puids[i]
+						accessTokenToAccessInfo[access_token]["puid"] = puids[i]
 					}
 
-					for access_token, value := range account_map {
+					for access_token, value := range accessTokenToAccessInfo {
 						// Automatically refresh the puid cookie
 						if access_token != "" {
 							refreshPuid(access_token, value["puid"])
@@ -147,7 +147,7 @@ func main() {
 		c.BindJSON(&request)
 
 		if request.AccessToken != "" {
-			account_map[request.AccessToken] = request.AccessInfo
+			accessTokenToAccessInfo[request.AccessToken] = request.AccessInfo
 		}
 		c.JSON(200, gin.H{"message": "updated"})
 	})
@@ -171,9 +171,9 @@ func main() {
 		}
 
 		// if access_token not in dict, add it
-		_, ok := account_map[req.AccessToken]
+		_, ok := accessTokenToAccessInfo[req.AccessToken]
 		if !ok {
-			account_map[req.AccessToken]["puid"] = req.Puid
+			accessTokenToAccessInfo[req.AccessToken]["puid"] = req.Puid
 		} else {
 			req.Puid = refreshPuid(req.AccessToken, req.Puid)
 		}
@@ -181,7 +181,7 @@ func main() {
 		if req.Puid == "" {
 			c.JSON(http.StatusInternalServerError, &RefreshPuidResponse{Error: "refresh puid failed"})
 		} else {
-			account_map[req.AccessToken]["puid"] = req.Puid
+			accessTokenToAccessInfo[req.AccessToken]["puid"] = req.Puid
 			c.JSON(http.StatusOK, &RefreshPuidResponse{Puid: req.Puid})
 		}
 	})
@@ -233,7 +233,7 @@ func refreshPuid(access_token string, puid string) string {
 
 		// if puid is invalid, remove it from dict
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
-			delete(account_map[access_token], puid)
+			delete(accessTokenToAccessInfo[access_token], puid)
 		}
 		return ""
 	}
@@ -244,7 +244,7 @@ func refreshPuid(access_token string, puid string) string {
 		if cookie.Name == "_puid" {
 			puid = cookie.Value
 			println("puid: " + puid)
-			account_map[access_token]["puid"] = puid
+			accessTokenToAccessInfo[access_token]["puid"] = puid
 			break
 		}
 	}
@@ -292,18 +292,18 @@ func proxy(c *gin.Context) {
 	access_token := strings.Split(authorization, " ")[1]
 
 	// assert access_token in access_info_map keys
-	access_info, ok := account_map[access_token]
+	access_info, ok := accessTokenToAccessInfo[access_token]
 	if !ok {
-		// get puid from access_info_map randomly
+		// get access_info randomly
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-		access_tokens := make([]string, 0, len(account_map))
-		for access_token := range account_map {
-			access_tokens = append(access_tokens, access_token)
+		keys := make([]string, 0, len(accessTokenToAccessInfo))
+		for key := range accessTokenToAccessInfo {
+			keys = append(keys, key)
 		}
 
-		access_token := access_tokens[r.Intn(len(access_tokens))]
-		access_info = account_map[access_token]
+		randomKey := keys[r.Intn(len(keys))]
+		access_info = accessTokenToAccessInfo[randomKey]
 		log.Println("access_info from access_info_map randomly: " + fmt.Sprintf("%v", access_info["openai_email"]))
 	} else {
 		log.Println("access_info from access_info_map: " + fmt.Sprintf("%v", access_info["openai_email"]))
